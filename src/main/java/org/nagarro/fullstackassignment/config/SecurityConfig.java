@@ -47,12 +47,20 @@ public class SecurityConfig {
                 .authorizeHttpRequests(auth -> auth
                         .requestMatchers(HttpMethod.OPTIONS, "/**").permitAll()
                         .requestMatchers(
-                            "/api/auth/**",
-                            "/api-docs/**",
-                            "/v3/api-docs/**",
-                            "/swagger-ui/**",
-                            "/swagger-ui.html",
-                            "/h2-console/**"
+                                "/",
+                                "/index.html",
+                                "/favicon.ico",
+                                "/assets/**",
+                                "/static/**",
+                                "/*.js",
+                                "/*.css",
+
+                                "/api/auth/**",
+                                "/api-docs/**",
+                                "/v3/api-docs/**",
+                                "/swagger-ui/**",
+                                "/swagger-ui.html",
+                                "/h2-console/**"
                         ).permitAll()
                         .requestMatchers("/api/customer/**").hasRole("CUSTOMER")
                         .requestMatchers("/api/owner/**").hasRole("OWNER")
