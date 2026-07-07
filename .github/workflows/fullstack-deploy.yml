@@ -33,7 +33,18 @@ jobs:
       - name: Prepare image name
         id: prep
         run: |
-          echo "image_uri=${{ secrets.ACR_LOGIN_SERVER }}/${GITHUB_REPOSITORY,,}" >> $GITHUB_OUTPUT
+          REGISTRY="${{ secrets.ACR_LOGIN_SERVER }}"
+          REGISTRY="$(printf '%s' "$REGISTRY" | tr -d '\r' | xargs)"
+          REGISTRY="${REGISTRY#https://}"
+          REGISTRY="${REGISTRY#http://}"
+          REGISTRY="${REGISTRY%/}"
+
+          if [ -z "$REGISTRY" ]; then
+            echo "ACR_LOGIN_SERVER is missing or invalid"
+            exit 1
+          fi
+
+          echo "image_uri=${REGISTRY}/${GITHUB_REPOSITORY,,}" >> "$GITHUB_OUTPUT"
 
       - name: Build Frontend
         working-directory: frontend
@@ -77,13 +88,52 @@ jobs:
         with:
           creds: ${{ secrets.AZURE_CREDENTIALS }}
 
+      - name: Validate deployment values
+        env:
+          WEBAPP: ${{ secrets.AZURE_WEBAPP_NAME }}
+          RG: ${{ secrets.AZURE_RESOURCE_GROUP }}
+          REGISTRY: ${{ secrets.ACR_LOGIN_SERVER }}
+          USERNAME: ${{ secrets.ACR_USERNAME }}
+          PASSWORD: ${{ secrets.ACR_PASSWORD }}
+        run: |
+          WEBAPP="$(printf '%s' "$WEBAPP" | tr -d '\r' | xargs)"
+          RG="$(printf '%s' "$RG" | tr -d '\r' | xargs)"
+          REGISTRY="$(printf '%s' "$REGISTRY" | tr -d '\r' | xargs)"
+          REGISTRY="${REGISTRY#https://}"
+          REGISTRY="${REGISTRY#http://}"
+          REGISTRY="${REGISTRY%/}"
+
+          if [ -z "$WEBAPP" ]; then
+            echo "AZURE_WEBAPP_NAME is missing or blank"
+            exit 1
+          fi
+
+          if [ -z "$RG" ]; then
+            echo "AZURE_RESOURCE_GROUP is missing or blank"
+            exit 1
+          fi
+
+          if [ -z "$USERNAME" ] || [ -z "$PASSWORD" ]; then
+            echo "ACR_USERNAME or ACR_PASSWORD is missing or blank"
+            exit 1
+          fi
+
+          if ! printf '%s' "$WEBAPP" | grep -Eq '^[a-zA-Z0-9-]+$'; then
+            echo "AZURE_WEBAPP_NAME contains invalid characters or extra spaces: '$WEBAPP'"
+            exit 1
+          fi
+
+          echo "WEBAPP=$WEBAPP" >> "$GITHUB_ENV"
+          echo "RG=$RG" >> "$GITHUB_ENV"
+          echo "REGISTRY=$REGISTRY" >> "$GITHUB_ENV"
+
       - name: Verify Azure Login
         uses: azure/cli@v2
         with:
           inlineScript: |
             az account show
-            az group show --name "${{ secrets.AZURE_RESOURCE_GROUP }}"
-            az acr show --name capstoneegistry
+            az group show --name "$RG"
+            az webapp show --name "$WEBAPP" --resource-group "$RG" --output table
 
       #########################################################
       ## DEBUG
@@ -110,24 +160,21 @@ jobs:
         env:
           IMAGE_URI: ${{ steps.prep.outputs.image_uri }}
           IMAGE_TAG: ${{ github.sha }}
-          WEBAPP: ${{ secrets.AZURE_WEBAPP_NAME }}
-          RG: ${{ secrets.AZURE_RESOURCE_GROUP }}
-          REGISTRY: ${{ secrets.ACR_LOGIN_SERVER }}
+          WEBAPP: ${{ env.WEBAPP }}
+          RG: ${{ env.RG }}
+          REGISTRY: ${{ env.REGISTRY }}
           USERNAME: ${{ secrets.ACR_USERNAME }}
           PASSWORD: ${{ secrets.ACR_PASSWORD }}
         with:
           inlineScript: |
             set -eux
 
-            echo "Current Azure Account"
-            az account show
-
-            echo "WebApp Details"
-            az webapp show \
-              --name "$WEBAPP" \
-              --resource-group "$RG"
-
-            echo "Container Configuration"
+            WEBAPP="$(printf '%s' "$WEBAPP" | tr -d '\r' | xargs)"
+            RG="$(printf '%s' "$RG" | tr -d '\r' | xargs)"
+            REGISTRY="$(printf '%s' "$REGISTRY" | tr -d '\r' | xargs)"
+            REGISTRY="${REGISTRY#https://}"
+            REGISTRY="${REGISTRY#http://}"
+            REGISTRY="${REGISTRY%/}"
 
             az webapp config container set \
               --name "$WEBAPP" \
@@ -144,15 +191,26 @@ jobs:
 #dsnf
       - name: Configure App Settings
         uses: azure/cli@v2
+        env:
+          WEBAPP: ${{ env.WEBAPP }}
+          RG: ${{ env.RG }}
+          APP_PORT: ${{ secrets.APP_PORT }}
+          DB_URL: ${{ secrets.DB_URL }}
+          DB_USERNAME: ${{ secrets.DB_USERNAME }}
+          DB_PASSWORD: ${{ secrets.DB_PASSWORD }}
+          JWT_SECRET: ${{ secrets.JWT_SECRET }}
         with:
           inlineScript: |
+            WEBAPP="$(printf '%s' "$WEBAPP" | tr -d '\r' | xargs)"
+            RG="$(printf '%s' "$RG" | tr -d '\r' | xargs)"
+
             az webapp config appsettings set \
-              --name "${{ secrets.AZURE_WEBAPP_NAME }}" \
-              --resource-group "${{ secrets.AZURE_RESOURCE_GROUP }}" \
+              --name "$WEBAPP" \
+              --resource-group "$RG" \
               --settings \
               WEBSITES_PORT=8080 \
-              APP_PORT="${{ secrets.APP_PORT }}" \
-              DB_URL="${{ secrets.DB_URL }}" \
-              DB_USERNAME="${{ secrets.DB_USERNAME }}" \
-              DB_PASSWORD="${{ secrets.DB_PASSWORD }}" \
-              JWT_SECRET="${{ secrets.JWT_SECRET }}"
+              APP_PORT="$APP_PORT" \
+              DB_URL="$DB_URL" \
+              DB_USERNAME="$DB_USERNAME" \
+              DB_PASSWORD="$DB_PASSWORD" \
+              JWT_SECRET="$JWT_SECRET"
