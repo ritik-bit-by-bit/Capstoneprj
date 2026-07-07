@@ -145,34 +145,18 @@ frontend/
 npm run build
 ```
 
-Creates an optimized production build in the `build/` directory.
+Creates an optimized production build in the `dist/` directory.
 
 ## Docker Deployment (Optional)
 
-Create a `Dockerfile` in the `frontend` directory:
-
-```dockerfile
-FROM node:18-alpine as build
-WORKDIR /app
-COPY package.json package-lock.json ./
-RUN npm ci
-COPY src ./src
-COPY public ./public
-RUN npm run build
-
-FROM nginx:alpine
-COPY --from=build /app/build /usr/share/nginx/html
-COPY nginx.conf /etc/nginx/conf.d/default.conf
-EXPOSE 80
-CMD ["nginx", "-g", "daemon off;"]
-```
-
-Then build and run:
+The frontend folder now includes a production-ready multi-stage `Dockerfile` and `nginx.conf`.
 
 ```bash
-docker build -t justeat-frontend .
+docker build --build-arg VITE_API_URL=https://<backend-app>.azurewebsites.net/api -t justeat-frontend .
 docker run -p 3000:80 justeat-frontend
 ```
+
+When deploying to Azure App Service, make sure `VITE_API_URL` points to the backend App Service URL so the React bundle talks to the live API.
 
 ## Troubleshooting
 

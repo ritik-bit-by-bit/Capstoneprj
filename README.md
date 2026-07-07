@@ -55,14 +55,47 @@ On Windows PowerShell:
 - `PUT /api/owner/orders/{orderId}/status`
 
 ## Docker
-Build jar first, then image:
+The backend Dockerfile now builds the JAR inside the image, so you can build directly from source:
 ```powershell
-.\mvnw.cmd clean package
-
 docker build -t justeat-backend .
 docker run -p 8080:8080 justeat-backend
 ```
 
-## Azure Deployment Note
-Use Azure App Service or Azure Container Apps for deployment. Capture deployment screenshots for submission and stop/delete resources after evaluation.
+## Azure Deployment with ACR + App Service
+
+This project is set up for a GitHub Actions pipeline that:
+1. Runs backend tests and frontend build checks.
+2. Builds Docker images for the backend and frontend.
+3. Pushes both images to Azure Container Registry (ACR).
+4. Updates two Azure App Service instances to pull the latest images.
+
+### Required Azure resources
+- Azure Container Registry
+- Backend Linux App Service using Docker
+- Frontend Linux App Service using Docker
+- A database reachable from the backend App Service
+
+### GitHub secrets required by `.github/workflows/azure-cd.yml`
+- `AZURE_CREDENTIALS` - service principal JSON for `azure/login`
+- `AZURE_RESOURCE_GROUP`
+- `AZURE_BACKEND_WEBAPP_NAME`
+- `AZURE_FRONTEND_WEBAPP_NAME`
+- `ACR_LOGIN_SERVER` - for example `myregistry.azurecr.io`
+- `ACR_USERNAME`
+- `ACR_PASSWORD`
+- `DB_URL`
+- `DB_USERNAME`
+- `DB_PASSWORD`
+- `JWT_SECRET`
+
+### Environment variables used in Azure App Service
+- Backend: `DB_URL`, `DB_USERNAME`, `DB_PASSWORD`, `JWT_SECRET`, `CORS_ALLOWED_ORIGINS`
+- Frontend: the React bundle is built with `VITE_API_URL` pointing to the backend App Service URL
+
+### Important note for CORS
+Set `CORS_ALLOWED_ORIGINS` to your frontend App Service URL, for example:
+`https://your-frontend-app.azurewebsites.net`
+
+### One-time Azure setup
+Create the App Services, enable container-based Linux hosting, and ensure the backend can reach its database. After that, every push to `main` will rebuild and redeploy automatically.
 
