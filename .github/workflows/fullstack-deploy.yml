@@ -22,7 +22,7 @@ jobs:
       - name: Set up Node.js
         uses: actions/setup-node@v4
         with:
-          node-version: "20"
+          node-version: "24"
           cache: npm
           cache-dependency-path: frontend/package-lock.json
 
@@ -38,7 +38,14 @@ jobs:
         env:
           ACR_LOGIN_SERVER: ${{ secrets.ACR_LOGIN_SERVER }}
         run: |
-          echo "image_uri=${ACR_LOGIN_SERVER}/${GITHUB_REPOSITORY,,}" >> "$GITHUB_OUTPUT"
+          if [ -z "$ACR_LOGIN_SERVER" ]; then
+            echo "ACR_LOGIN_SERVER is missing"
+            exit 1
+          fi
+          ACR_SERVER="${ACR_LOGIN_SERVER#https://}"
+          ACR_SERVER="${ACR_SERVER#http://}"
+          ACR_SERVER="${ACR_SERVER%/}"
+          echo "image_uri=${ACR_SERVER}/${GITHUB_REPOSITORY,,}" >> "$GITHUB_OUTPUT"
 
       - name: Build Frontend
         working-directory: frontend
@@ -48,11 +55,14 @@ jobs:
 
       - name: Copy frontend build to Spring Boot static folder
         run: |
+          mkdir -p src/main/resources/static
           rm -rf src/main/resources/static/*
-          cp -R frontend/dist/* src/main/resources/static/
+          cp -R frontend/dist/. src/main/resources/static/
 
       - name: Build Backend
-        run: ./mvnw clean package -DskipTests
+        run: |
+          chmod +x mvnw
+          ./mvnw clean package -DskipTests
 
       - name: Login to Azure Container Registry
         uses: docker/login-action@v3
@@ -75,6 +85,31 @@ jobs:
         with:
           creds: ${{ secrets.AZURE_CREDENTIALS }}
 
+      - name: Validate deployment inputs
+        env:
+          AZURE_WEBAPP_NAME: ${{ secrets.AZURE_WEBAPP_NAME }}
+          AZURE_RESOURCE_GROUP: ${{ secrets.AZURE_RESOURCE_GROUP }}
+          ACR_LOGIN_SERVER: ${{ secrets.ACR_LOGIN_SERVER }}
+          ACR_USERNAME: ${{ secrets.ACR_USERNAME }}
+          ACR_PASSWORD: ${{ secrets.ACR_PASSWORD }}
+        run: |
+          if [ -z "$AZURE_WEBAPP_NAME" ]; then
+            echo "AZURE_WEBAPP_NAME is missing"
+            exit 1
+          fi
+          if [ -z "$AZURE_RESOURCE_GROUP" ]; then
+            echo "AZURE_RESOURCE_GROUP is missing"
+            exit 1
+          fi
+          if [ -z "$ACR_USERNAME" ] || [ -z "$ACR_PASSWORD" ]; then
+            echo "ACR_USERNAME or ACR_PASSWORD is missing"
+            exit 1
+          fi
+          ACR_SERVER="${ACR_LOGIN_SERVER#https://}"
+          ACR_SERVER="${ACR_SERVER#http://}"
+          ACR_SERVER="${ACR_SERVER%/}"
+          echo "Using ACR server: $ACR_SERVER"
+
       - name: Configure Web App Container
         uses: azure/cli@v2
         env:
@@ -89,13 +124,25 @@ jobs:
 
         with:
           inlineScript: |
+            set -euo pipefail
+            ACR_SERVER="${ACR_LOGIN_SERVER#https://}"
+            ACR_SERVER="${ACR_SERVER#http://}"
+            ACR_SERVER="${ACR_SERVER%/}"
+
+            az webapp show \
+              --name "$AZURE_WEBAPP_NAME" \
+              --resource-group "$AZURE_RESOURCE_GROUP" \
+              --query "{name:name, state:state, kind:kind}" \
+              --output table
+
             az webapp config container set \
               --name "$AZURE_WEBAPP_NAME" \
               --resource-group "$AZURE_RESOURCE_GROUP" \
               --container-image-name "$IMAGE_URI:$IMAGE_TAG" \
-              --container-registry-url "https://${ACR_LOGIN_SERVER}" \
+              --container-registry-url "https://${ACR_SERVER}" \
               --container-registry-user "$ACR_USERNAME" \
-              --container-registry-password "$ACR_PASSWORD"
+              --container-registry-password "$ACR_PASSWORD" \
+              --output table
 
       - name: Configure Application Settings
         uses: azure/cli@v2
@@ -107,19 +154,7 @@ jobs:
           DB_URL: ${{ secrets.DB_URL }}
           DB_USERNAME: ${{ secrets.DB_USERNAME }}
           DB_PASSWORD: ${{ secrets.DB_PASSWORD }}
-          DB_DRIVER: ${{ secrets.DB_DRIVER }}
-
           JWT_SECRET: ${{ secrets.JWT_SECRET }}
-          JWT_EXPIRATION_MINUTES: ${{ secrets.JWT_EXPIRATION_MINUTES }}
-
-          CORS_ALLOWED_ORIGINS: ${{ secrets.CORS_ALLOWED_ORIGINS }}
-
-          MAIL_HOST: ${{ secrets.MAIL_HOST }}
-          MAIL_PORT: ${{ secrets.MAIL_PORT }}
-          MAIL_USERNAME: ${{ secrets.MAIL_USERNAME }}
-          MAIL_PASSWORD: ${{ secrets.MAIL_PASSWORD }}
-
-          PASSWORD_RESET_OTP_EXPIRY_MINUTES: ${{ secrets.PASSWORD_RESET_OTP_EXPIRY_MINUTES }}
 
         with:
           inlineScript: |
@@ -132,13 +167,5 @@ jobs:
               DB_URL="$DB_URL" \
               DB_USERNAME="$DB_USERNAME" \
               DB_PASSWORD="$DB_PASSWORD" \
-              DB_DRIVER="$DB_DRIVER" \
-              JWT_SECRET="$JWT_SECRET" \
-              JWT_EXPIRATION_MINUTES="$JWT_EXPIRATION_MINUTES" \
-              CORS_ALLOWED_ORIGINS="$CORS_ALLOWED_ORIGINS" \
-              MAIL_HOST="$MAIL_HOST" \
-              MAIL_PORT="$MAIL_PORT" \
-              MAIL_USERNAME="$MAIL_USERNAME" \
-              MAIL_PASSWORD="$MAIL_PASSWORD" \
-              PASSWORD_RESET_OTP_EXPIRY_MINUTES="$PASSWORD_RESET_OTP_EXPIRY_MINUTES"
+              JWT_SECRET="$JWT_SECRET"
 #            bsbx
