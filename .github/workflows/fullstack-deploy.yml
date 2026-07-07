@@ -95,6 +95,7 @@ jobs:
           REGISTRY: ${{ secrets.ACR_LOGIN_SERVER }}
           USERNAME: ${{ secrets.ACR_USERNAME }}
           PASSWORD: ${{ secrets.ACR_PASSWORD }}
+          DB_URL: ${{ secrets.DB_URL }}
         run: |
           WEBAPP="$(printf '%s' "$WEBAPP" | tr -d '\r' | xargs)"
           RG="$(printf '%s' "$RG" | tr -d '\r' | xargs)"
@@ -115,6 +116,17 @@ jobs:
 
           if [ -z "$USERNAME" ] || [ -z "$PASSWORD" ]; then
             echo "ACR_USERNAME or ACR_PASSWORD is missing or blank"
+            exit 1
+          fi
+
+          if [ -z "$DB_URL" ]; then
+            echo "DB_URL is missing or blank"
+            exit 1
+          fi
+
+          if ! printf '%s' "$DB_URL" | grep -Eq '^jdbc:postgresql://'; then
+            echo "DB_URL must start with jdbc:postgresql://"
+            echo "Example: jdbc:postgresql://your-server.postgres.database.azure.com:5432/yourdb?sslmode=require"
             exit 1
           fi
 
