@@ -14,7 +14,7 @@ WHERE NOT EXISTS (SELECT 1 FROM restaurants WHERE id = 3);
 INSERT INTO restaurants (id, name, location, cuisine, rating, owner_id)
 SELECT 4, 'Taco Fiesta', 'Gurgaon', 'Mexican', 4.2, 1
 WHERE NOT EXISTS (SELECT 1 FROM restaurants WHERE id = 4);
-
+-- jj
 INSERT INTO restaurants (id, name, location, cuisine, rating, owner_id)
 SELECT 5, 'Thai Orchid', 'Delhi', 'Thai', 4.6, 1
 WHERE NOT EXISTS (SELECT 1 FROM restaurants WHERE id = 5);
