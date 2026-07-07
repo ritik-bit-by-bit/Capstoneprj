@@ -131,10 +131,20 @@ jobs:
         uses: azure/cli@v2
         with:
           inlineScript: |
+            echo "Azure Account:"
             az account show
-            az group show --name "$RG"
-            az webapp show --name "$WEBAPP" --resource-group "$RG" --output table
 
+            echo "Resource Group:"
+            az group show \
+              --name "${{ secrets.AZURE_RESOURCE_GROUP }}" \
+              --query "{name:name,location:location}" \
+              -o table
+
+            echo "Container Registry:"
+            az acr show \
+              --name capstoneegistry \
+              --query "{name:name,loginServer:loginServer}" \
+              -o table
       #########################################################
       ## DEBUG
       #########################################################
