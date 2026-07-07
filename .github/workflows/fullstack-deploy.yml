@@ -13,39 +13,27 @@ jobs:
   deploy:
     runs-on: ubuntu-latest
 
-    if: github.ref == 'refs/heads/main'
-
     steps:
-      - name: Checkout repository
-        uses: actions/checkout@v4
+      - uses: actions/checkout@v4
 
       - name: Set up Node.js
         uses: actions/setup-node@v4
         with:
-          node-version: "24"
+          node-version: 24
           cache: npm
           cache-dependency-path: frontend/package-lock.json
 
-      - name: Set up Java 17
+      - name: Set up Java
         uses: actions/setup-java@v4
         with:
           distribution: temurin
-          java-version: "17"
+          java-version: 17
           cache: maven
 
       - name: Prepare image name
         id: prep
-        env:
-          ACR_LOGIN_SERVER: ${{ secrets.ACR_LOGIN_SERVER }}
         run: |
-          if [ -z "$ACR_LOGIN_SERVER" ]; then
-            echo "ACR_LOGIN_SERVER is missing"
-            exit 1
-          fi
-          ACR_SERVER="${ACR_LOGIN_SERVER#https://}"
-          ACR_SERVER="${ACR_SERVER#http://}"
-          ACR_SERVER="${ACR_SERVER%/}"
-          echo "image_uri=${ACR_SERVER}/${GITHUB_REPOSITORY,,}" >> "$GITHUB_OUTPUT"
+          echo "image_uri=${{ secrets.ACR_LOGIN_SERVER }}/${GITHUB_REPOSITORY,,}" >> $GITHUB_OUTPUT
 
       - name: Build Frontend
         working-directory: frontend
@@ -53,7 +41,7 @@ jobs:
           npm ci
           npm run build
 
-      - name: Copy frontend build to Spring Boot static folder
+      - name: Copy Frontend
         run: |
           mkdir -p src/main/resources/static
           rm -rf src/main/resources/static/*
@@ -64,14 +52,14 @@ jobs:
           chmod +x mvnw
           ./mvnw clean package -DskipTests
 
-      - name: Login to Azure Container Registry
+      - name: Login to ACR
         uses: docker/login-action@v3
         with:
           registry: ${{ secrets.ACR_LOGIN_SERVER }}
           username: ${{ secrets.ACR_USERNAME }}
           password: ${{ secrets.ACR_PASSWORD }}
 
-      - name: Build and Push Docker Image
+      - name: Build & Push Image
         uses: docker/build-push-action@v6
         with:
           context: .
@@ -80,92 +68,93 @@ jobs:
             ${{ steps.prep.outputs.image_uri }}:latest
             ${{ steps.prep.outputs.image_uri }}:${{ github.sha }}
 
-      - name: Login to Azure
+      #########################################################
+      ## Azure Login
+      #########################################################
+
+      - name: Azure Login
         uses: azure/login@v2
         with:
-          creds: ${{ secrets.AZURE_CREDENTIALS }}
+          client-id: ${{ secrets.AZURE_CLIENT_ID }}
+          tenant-id: ${{ secrets.AZURE_TENANT_ID }}
+          subscription-id: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
 
-      - name: Validate deployment inputs
-        env:
-          AZURE_WEBAPP_NAME: ${{ secrets.AZURE_WEBAPP_NAME }}
-          AZURE_RESOURCE_GROUP: ${{ secrets.AZURE_RESOURCE_GROUP }}
-          ACR_LOGIN_SERVER: ${{ secrets.ACR_LOGIN_SERVER }}
-          ACR_USERNAME: ${{ secrets.ACR_USERNAME }}
-          ACR_PASSWORD: ${{ secrets.ACR_PASSWORD }}
+      - name: Verify Azure Login
+        uses: azure/cli@v2
+        with:
+          inlineScript: |
+            az account show
+            az group show --name "${{ secrets.AZURE_RESOURCE_GROUP }}"
+            az acr show --name capstoneegistry
+
+      #########################################################
+      ## DEBUG
+      #########################################################
+
+      - name: Debug Variables
         run: |
-          if [ -z "$AZURE_WEBAPP_NAME" ]; then
-            echo "AZURE_WEBAPP_NAME is missing"
-            exit 1
-          fi
-          if [ -z "$AZURE_RESOURCE_GROUP" ]; then
-            echo "AZURE_RESOURCE_GROUP is missing"
-            exit 1
-          fi
-          if [ -z "$ACR_USERNAME" ] || [ -z "$ACR_PASSWORD" ]; then
-            echo "ACR_USERNAME or ACR_PASSWORD is missing"
-            exit 1
-          fi
-          ACR_SERVER="${ACR_LOGIN_SERVER#https://}"
-          ACR_SERVER="${ACR_SERVER#http://}"
-          ACR_SERVER="${ACR_SERVER%/}"
-          echo "Using ACR server: $ACR_SERVER"
+          echo "==============================="
+          echo "IMAGE_URI=${{ steps.prep.outputs.image_uri }}"
+          echo "IMAGE_TAG=${{ github.sha }}"
+          echo "WEBAPP=${{ secrets.AZURE_WEBAPP_NAME }}"
+          echo "RESOURCE_GROUP=${{ secrets.AZURE_RESOURCE_GROUP }}"
+          echo "REGISTRY=${{ secrets.ACR_LOGIN_SERVER }}"
+          echo "USERNAME=${{ secrets.ACR_USERNAME }}"
+          echo "PASSWORD PRESENT=$([[ -n '${{ secrets.ACR_PASSWORD }}' ]] && echo YES || echo NO)"
+          echo "==============================="
+
+      #########################################################
+      ## Configure Container
+      #########################################################
 
       - name: Configure Web App Container
         uses: azure/cli@v2
         env:
           IMAGE_URI: ${{ steps.prep.outputs.image_uri }}
           IMAGE_TAG: ${{ github.sha }}
-          AZURE_WEBAPP_NAME: ${{ secrets.AZURE_WEBAPP_NAME }}
-          AZURE_RESOURCE_GROUP: ${{ secrets.AZURE_RESOURCE_GROUP }}
-
-          ACR_LOGIN_SERVER: ${{ secrets.ACR_LOGIN_SERVER }}
-          ACR_USERNAME: ${{ secrets.ACR_USERNAME }}
-          ACR_PASSWORD: ${{ secrets.ACR_PASSWORD }}
-
+          WEBAPP: ${{ secrets.AZURE_WEBAPP_NAME }}
+          RG: ${{ secrets.AZURE_RESOURCE_GROUP }}
+          REGISTRY: ${{ secrets.ACR_LOGIN_SERVER }}
+          USERNAME: ${{ secrets.ACR_USERNAME }}
+          PASSWORD: ${{ secrets.ACR_PASSWORD }}
         with:
           inlineScript: |
-            set -euo pipefail
-            ACR_SERVER="${ACR_LOGIN_SERVER#https://}"
-            ACR_SERVER="${ACR_SERVER#http://}"
-            ACR_SERVER="${ACR_SERVER%/}"
+            set -eux
 
+            echo "Current Azure Account"
+            az account show
+
+            echo "WebApp Details"
             az webapp show \
-              --name "$AZURE_WEBAPP_NAME" \
-              --resource-group "$AZURE_RESOURCE_GROUP" \
-              --query "{name:name, state:state, kind:kind}" \
-              --output table
+              --name "$WEBAPP" \
+              --resource-group "$RG"
+
+            echo "Container Configuration"
 
             az webapp config container set \
-              --name "$AZURE_WEBAPP_NAME" \
-              --resource-group "$AZURE_RESOURCE_GROUP" \
+              --name "$WEBAPP" \
+              --resource-group "$RG" \
               --container-image-name "$IMAGE_URI:$IMAGE_TAG" \
-              --container-registry-url "https://${ACR_SERVER}" \
-              --container-registry-user "$ACR_USERNAME" \
-              --container-registry-password "$ACR_PASSWORD" \
-              --output table
+              --container-registry-url "https://$REGISTRY" \
+              --container-registry-user "$USERNAME" \
+              --container-registry-password "$PASSWORD" \
+              --debug
 
-      - name: Configure Application Settings
+      #########################################################
+      ## App Settings
+      #########################################################
+
+      - name: Configure App Settings
         uses: azure/cli@v2
-        env:
-          AZURE_WEBAPP_NAME: ${{ secrets.AZURE_WEBAPP_NAME }}
-          AZURE_RESOURCE_GROUP: ${{ secrets.AZURE_RESOURCE_GROUP }}
-
-          APP_PORT: ${{ secrets.APP_PORT }}
-          DB_URL: ${{ secrets.DB_URL }}
-          DB_USERNAME: ${{ secrets.DB_USERNAME }}
-          DB_PASSWORD: ${{ secrets.DB_PASSWORD }}
-          JWT_SECRET: ${{ secrets.JWT_SECRET }}
-
         with:
           inlineScript: |
             az webapp config appsettings set \
-              --name "$AZURE_WEBAPP_NAME" \
-              --resource-group "$AZURE_RESOURCE_GROUP" \
+              --name "${{ secrets.AZURE_WEBAPP_NAME }}" \
+              --resource-group "${{ secrets.AZURE_RESOURCE_GROUP }}" \
               --settings \
               WEBSITES_PORT=8080 \
-              APP_PORT="$APP_PORT" \
-              DB_URL="$DB_URL" \
-              DB_USERNAME="$DB_USERNAME" \
-              DB_PASSWORD="$DB_PASSWORD" \
-              JWT_SECRET="$JWT_SECRET"
-#            bsbx
+              APP_PORT="${{ secrets.APP_PORT }}" \
+              DB_URL="${{ secrets.DB_URL }}" \
+              DB_USERNAME="${{ secrets.DB_USERNAME }}" \
+              DB_PASSWORD="${{ secrets.DB_PASSWORD }}" \
+              JWT_SECRET="${{ secrets.JWT_SECRET }}"
